@@ -11,6 +11,11 @@ name: iOS build
 
 on:
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: "Jobs to run (llvm, unixlibs, i386; blank = all). The app job needs all of them."
+        required: false
+        default: ""
   push:
     branches: [gw-ios]
 
@@ -29,6 +34,7 @@ env:
 
 jobs:
   llvm:
+    if: inputs.jobs == '' || inputs.jobs == null || contains(inputs.jobs, 'llvm')
     runs-on: macos-26
     timeout-minutes: 330
     steps:
@@ -82,6 +88,7 @@ jobs:
           retention-days: 7
 
   unixlibs:
+    if: inputs.jobs == '' || inputs.jobs == null || contains(inputs.jobs, 'unixlibs')
     runs-on: macos-26
     timeout-minutes: 240
     steps:
@@ -148,6 +155,7 @@ jobs:
           retention-days: 7
 
   i386:
+    if: inputs.jobs == '' || inputs.jobs == null || contains(inputs.jobs, 'i386')
     runs-on: macos-26
     timeout-minutes: 330
     steps:
