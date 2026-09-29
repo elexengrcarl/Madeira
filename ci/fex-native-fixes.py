@@ -44,6 +44,14 @@ CASPAL_WIN32 = """  MEMORY_BASIC_INFORMATION mbi {};
                     (GPRs[AddressReg] & 15) ? "yes" : "no", mbi.BaseAddress, mbi.RegionSize,
                     mbi.Protect, type, mbi.State);
 """
+# AllocatorHooks.cpp defines IOS_RPM_GUARD only in its ENABLE_FEX_ALLOCATOR branch, but the plain
+# malloc_usable_size wrapper of the other branch uses it too (build/fex-ios/build.sh builds with
+# ENABLE_FEX_ALLOCATOR=OFF, and the app links this object as libJemallocLibs.a).
+patch("FEX/FEXCore/Source/Utils/AllocatorHooks.cpp",
+      "  IOS_RPM_GUARD();\n#ifdef __APPLE__\n  return ::malloc_size(ptr);",
+      "#ifdef IOS_RPM_GUARD " + MARKER + "\n  IOS_RPM_GUARD();\n#endif\n#ifdef __APPLE__\n  return ::malloc_size(ptr);",
+      "AllocatorHooks.cpp: IOS_RPM_GUARD only where defined")
+
 patch("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp",
       CASPAL_WIN32,
       "#ifdef _WIN32\n" + CASPAL_WIN32 + "#else\n  " + MARKER + "\n"
