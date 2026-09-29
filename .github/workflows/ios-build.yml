@@ -126,7 +126,7 @@ jobs:
           python3 ci/fex-native-fixes.py
           if ! bash build/fex-ios/build.sh; then
             # Keep going past the first failing file, so one run lists every error.
-            cmake --build FEX/build-ios --target FEXCore FEXCore_Base -- -k -j3 2>&1 \
+            cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs -- -k -j3 2>&1 \
               | sed 's/\x1b\[[0-9;]*m//g' | grep -E ' error: ' | sort -u | head -80
             exit 1
           fi
