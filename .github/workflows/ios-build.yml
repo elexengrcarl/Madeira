@@ -105,7 +105,7 @@ jobs:
           git submodule update --init --recursive --depth 1 FEX
       - name: Tools
         run: |
-          brew install ninja bison flex ccache llvm
+          brew install ninja bison flex ccache llvm gnutls
           mkdir -p toolchains ci-logs
           curl -fsSL -o /tmp/mingw.tar.xz \
             "https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/$LLVM_MINGW.tar.xz"

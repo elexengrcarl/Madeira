@@ -1,7 +1,7 @@
 """CI: make the pinned FEX build as the native iOS library the app links (FEX/build-ios).
 
-Two diagnostics at the pinned commit were only ever compiled into FEX's Windows-PE modules for the
-iOS host (xtajit64.dll, xtajit.dll), so the native Mach-O build cannot compile them:
+Diagnostics at the pinned commit that were only ever built into FEX's Windows-PE modules for the
+iOS host (xtajit64.dll, xtajit.dll), so the native Mach-O build cannot compile or link them:
   * Core.cpp's probes ([ffs-bypass], [cb-entry]) read IosFfsBypassLog/IosCbEntryLog outside any
     #ifdef but declare them only under FEX_IOS_HOST (the PE modules' define, which also pulls in
     Win32 code). The native library gets zeroed counters: the reporters compare against values
@@ -17,7 +17,7 @@ MARKER = "/* ci: native iOS build */"
 
 def patch(path, anchor, replacement, what):
     s = open(path, encoding="utf-8", newline="").read()
-    if MARKER in s:
+    if replacement in s:
         print(f"fex-native-fixes: {what}: already applied")
         return
     if s.count(anchor) != 1:
@@ -32,6 +32,17 @@ patch("FEX/FEXCore/Source/Interface/Core/Core.cpp",
       "\nstatic uint64_t IosCbEntryLog[8] {};\nstatic uint64_t IosFfsBypassLog[4] {};\n#endif\n\n"
       "#ifdef FEX_IOS_HOST\n/* ml648:",
       "Core.cpp: zeroed probe counters")
+
+# CompileBlock's [rpm-cas] drain calls rpm_cas_snapshot_take, which lives in FEX's rpmalloc fork -
+# and FEX builds no rpmalloc on Apple platforms. A weak "no snapshot" fallback; a linked rpmalloc's
+# strong definition still wins.
+patch("FEX/FEXCore/Source/Interface/Core/Core.cpp",
+      "int rpm_cas_snapshot_take(struct rpm_cas_snapshot* out);\n}\n",
+      "int rpm_cas_snapshot_take(struct rpm_cas_snapshot* out);\n}\n"
+      "#ifndef FEX_IOS_HOST " + MARKER + "\n"
+      "extern \"C\" __attribute__((weak)) int rpm_cas_snapshot_take(struct rpm_cas_snapshot*) {\n"
+      "  return 0;\n}\n#endif\n",
+      "Core.cpp: weak rpm_cas_snapshot_take")
 
 CASPAL_WIN32 = """  MEMORY_BASIC_INFORMATION mbi {};
   const char* type = "?";
