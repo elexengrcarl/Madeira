@@ -160,6 +160,9 @@ jobs:
             FEX/build-ios/External/cephes/libcephes_128bit.a
             FEX/build-ios/External/fmt/libfmt.a
             FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a
+            FEX/build-ios/**/*.h
+            FEX/build-ios/**/*.inl
+            FEX/build-ios/**/*.inc
           if-no-files-found: error
           retention-days: 7
 
@@ -203,6 +206,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Submodules (FEX headers for FEXBridge.mm)
+        run: git submodule update --init --recursive --depth 1 FEX
       - uses: actions/download-artifact@v4
         with: { name: dxmt, path: app/Madeira }
       - uses: actions/download-artifact@v4
@@ -219,12 +224,14 @@ jobs:
           ls app/Madeira/i386-windows | wc -l
       - name: xcodebuild (Debug - Release builds crash the guest, docs/BUILDING.md)
         run: |
+          set -o pipefail
           xcodebuild -version
           xcodebuild -project app/Madeira.xcodeproj -scheme Madeira -configuration Debug \
             -destination 'generic/platform=iOS' -derivedDataPath build/xcode-derived \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build \
-            | tee /tmp/xcodebuild.log | grep -E 'error:|warning: .*(undefined|duplicate)|BUILD (SUCCEEDED|FAILED)' || true
-          test -d build/xcode-derived/Build/Products/Debug-iphoneos/Madeira.app
+            | tee /tmp/xcodebuild.log | { grep -E 'error:|warning: .*(undefined|duplicate)|BUILD (SUCCEEDED|FAILED)' || true; }
+          # A failed build still leaves a Madeira.app of copied resources: require the executable.
+          test -f build/xcode-derived/Build/Products/Debug-iphoneos/Madeira.app/Madeira
       - name: Ad-hoc sign with the entitlements, package .ipa
         run: |
           APP=build/xcode-derived/Build/Products/Debug-iphoneos/Madeira.app
