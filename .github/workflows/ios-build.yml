@@ -125,14 +125,15 @@ jobs:
               | sed 's/\x1b\[[0-9;]*m//g' | grep -E ' error: ' | sort -u | head -80
             exit 1
           fi
-      - name: ntdll unix
-        run: bash build/ntdll-unix/build.sh
-      - name: wineserver
+      - name: Wine unix libraries (ntdll, wineserver, win32u)
         run: |
-          bash ci/wineserver-base.sh
-          bash build/wineserver/build.sh
-      - name: win32u unix
-        run: bash build/win32u-unix/build.sh
+          python3 ci/sdk-fixes.py
+          # All three even when one fails, so a run reports every library's errors.
+          rc=0
+          bash build/ntdll-unix/build.sh || rc=1
+          { bash ci/wineserver-base.sh && bash build/wineserver/build.sh; } || rc=1
+          bash build/win32u-unix/build.sh || rc=1
+          exit $rc
       - name: Compiler errors
         if: failure()
         run: |
