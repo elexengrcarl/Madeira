@@ -1,0 +1,227 @@
+# Builds Madeira (with the 32-bit WoW64 + D3D9 series) into an unsigned, ad-hoc-signed .ipa on
+# GitHub's macOS runners, for sideloading with SideStore/Sideloadly from a Windows PC.
+#
+# Upstream documents the build as a sequence run by hand on one Mac with several inputs that
+# are not in the repository (docs/BUILDING.md). The ci/ scripts fill those gaps:
+#   ci/build-llvm-ios.sh   LLVM 15 for iOS (DXMT's shader compiler links it)
+#   ci/wine-headers.sh     the configured wine/build-macos tree the unix-side builds read
+#   ci/wineserver-base.sh  the base libwineserver.a that build/wineserver/build.sh patches
+# Jobs run in parallel where they can, so one run reports as many failures as possible.
+name: iOS build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [gw-ios]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LLVM_MINGW: llvm-mingw-20260421-ucrt-macos-universal
+  LLVM_MINGW_SHA256: bd85a3975723815cef28dbbd2ca2cb0c926f6b348a12a0453f39f7af273cb3f7
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+jobs:
+  llvm:
+    runs-on: macos-26
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            toolchains/llvm-ios-build/lib
+            toolchains/llvm-ios-build/include
+            toolchains/llvm-project/llvm/include
+          key: llvm15-ios-${{ hashFiles('ci/build-llvm-ios.sh') }}
+      - name: Build LLVM 15 for iOS
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          brew install ninja
+          xcodebuild -version
+          bash ci/build-llvm-ios.sh
+
+  dxmt:
+    needs: llvm
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Submodules (DXMT)
+        run: git submodule update --init --recursive --depth 1 research/dxmt
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            toolchains/llvm-ios-build/lib
+            toolchains/llvm-ios-build/include
+            toolchains/llvm-project/llvm/include
+          key: llvm15-ios-${{ hashFiles('ci/build-llvm-ios.sh') }}
+          fail-on-cache-miss: true
+      - name: Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || true
+      - name: DXMT unix side (native D3D9 frontend, airconv, winemetal)
+        run: |
+          bash build/dxmt-ios/build.sh
+          xcrun -sdk iphoneos libtool -static -o app/Madeira/libdxmt_combined.a \
+              build/dxmt-ios/obj/*.o toolchains/llvm-ios-build/lib/*.a
+          ls -l app/Madeira/libdxmt_combined.a
+      - name: Compiler errors
+        if: failure()
+        run: for f in build/dxmt-ios/obj/*.err; do [ -s "$f" ] && { echo "==== $f"; head -40 "$f"; }; done; true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dxmt
+          path: app/Madeira/libdxmt_combined.a
+          retention-days: 7
+
+  unixlibs:
+    runs-on: macos-26
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Submodules (Wine, FEX)
+        run: |
+          git submodule update --init --depth 1 wine
+          git submodule update --init --recursive --depth 1 FEX
+      - name: Tools
+        run: |
+          brew install ninja bison flex ccache llvm
+          mkdir -p toolchains ci-logs
+          curl -fsSL -o /tmp/mingw.tar.xz \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/$LLVM_MINGW.tar.xz"
+          echo "$LLVM_MINGW_SHA256  /tmp/mingw.tar.xz" | shasum -a 256 -c
+          tar -xJf /tmp/mingw.tar.xz -C toolchains
+      - name: GnuTLS (headers + symtab input)
+        run: bash build/gnutls-ios/build.sh
+      - name: FFmpeg
+        run: bash build/ffmpeg/build.sh
+      - name: FreeType
+        run: |
+          git clone --depth 1 --branch VER-2-13-3 https://github.com/freetype/freetype.git research/freetype
+          bash build/freetype-ios/build.sh
+      - name: Wine headers (build-macos)
+        run: bash ci/wine-headers.sh
+      - name: FEX core
+        run: bash build/fex-ios/build.sh
+      - name: ntdll unix
+        run: bash build/ntdll-unix/build.sh
+      - name: wineserver
+        run: |
+          bash ci/wineserver-base.sh
+          bash build/wineserver/build.sh
+      - name: win32u unix
+        run: bash build/win32u-unix/build.sh
+      - name: Compiler errors
+        if: failure()
+        run: |
+          for f in build/*/obj/*.err build/wineserver/obj/err-*.txt build/wineserver/obj-base/*.err; do
+            [ -s "$f" ] && { echo "==== $f"; head -40 "$f"; }
+          done
+          for f in ci-logs/*.log build/ffmpeg/obj/*.log build/gnutls-ios/obj/*.log; do
+            [ -f "$f" ] && { echo "==== $f"; tail -40 "$f"; }
+          done
+          true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unixlibs
+          path: |
+            app/Madeira/libntdll_unix.a
+            app/Madeira/libwineserver.a
+            app/Madeira/libwin32u_unix.a
+            app/Madeira/libavformat.a
+            app/Madeira/libavcodec.a
+            app/Madeira/libswresample.a
+            app/Madeira/libavutil.a
+            FEX/build-ios/FEXCore/Source/*.a
+            FEX/build-ios/External/SoftFloat-3e/libsoftfloat_3e.a
+            FEX/build-ios/External/cephes/libcephes_128bit.a
+            FEX/build-ios/External/fmt/libfmt.a
+            FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a
+          if-no-files-found: error
+          retention-days: 7
+
+  i386:
+    runs-on: macos-26
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - name: Submodules (Wine, DXMT)
+        run: |
+          git submodule update --init --depth 1 wine
+          git submodule update --init --recursive --depth 1 research/dxmt
+      - name: Tools
+        run: |
+          brew install ninja meson bison flex
+          mkdir -p toolchains
+          curl -fsSL -o /tmp/mingw.tar.xz \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/$LLVM_MINGW.tar.xz"
+          echo "$LLVM_MINGW_SHA256  /tmp/mingw.tar.xz" | shasum -a 256 -c
+          tar -xJf /tmp/mingw.tar.xz -C toolchains
+      - name: i386 Wine farm + DXMT i386 (d3d9 shim and frontend)
+        run: |
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+          bash build/wine-i386/build.sh
+      - name: Build log
+        if: failure()
+        run: |
+          tail -80 wine/build-i386/config.log 2>/dev/null || true
+          grep -nE 'error|Error' wine/build-i386/madeira-i386-build.log | head -80 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: i386-windows
+          path: app/Madeira/i386-windows/
+          if-no-files-found: error
+          retention-days: 7
+
+  app:
+    needs: [dxmt, unixlibs, i386]
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: dxmt, path: app/Madeira }
+      - uses: actions/download-artifact@v4
+        with: { name: unixlibs, path: . }
+      - uses: actions/download-artifact@v4
+        with: { name: i386-windows, path: app/Madeira/i386-windows }
+      - name: Inputs the project expects
+        run: |
+          bash build/stage-licenses.sh
+          # Microsoft's x64 C++ runtime for 64-bit games; not redistributable here and not
+          # needed by 32-bit programs, but the project references the folder.
+          mkdir -p app/Madeira/x86_64-vcruntime
+          ls app/Madeira/*.a
+          ls app/Madeira/i386-windows | wc -l
+      - name: xcodebuild (Debug - Release builds crash the guest, docs/BUILDING.md)
+        run: |
+          xcodebuild -version
+          xcodebuild -project app/Madeira.xcodeproj -scheme Madeira -configuration Debug \
+            -destination 'generic/platform=iOS' -derivedDataPath build/xcode-derived \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build \
+            | tee /tmp/xcodebuild.log | grep -E 'error:|warning: .*(undefined|duplicate)|BUILD (SUCCEEDED|FAILED)' || true
+          test -d build/xcode-derived/Build/Products/Debug-iphoneos/Madeira.app
+      - name: Ad-hoc sign with the entitlements, package .ipa
+        run: |
+          APP=build/xcode-derived/Build/Products/Debug-iphoneos/Madeira.app
+          find "$APP" \( -name '*.dylib' -o -name '*.framework' \) -print0 | xargs -0 -I{} codesign -f -s - {}
+          codesign -f -s - --entitlements app/Madeira/Madeira.entitlements "$APP"
+          codesign -d --entitlements - "$APP"
+          mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry ../Madeira-gw.ipa Payload)
+          ls -l Madeira-gw.ipa
+      - name: xcodebuild log
+        if: failure()
+        run: grep -nE 'error|Undefined|duplicate symbol' -A3 /tmp/xcodebuild.log | head -150 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Madeira-ipa
+          path: Madeira-gw.ipa
+          retention-days: 14
