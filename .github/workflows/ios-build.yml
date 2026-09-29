@@ -74,6 +74,7 @@ jobs:
         run: xcodebuild -downloadComponent MetalToolchain || true
       - name: DXMT unix side (native D3D9 frontend, airconv, winemetal)
         run: |
+          bash ci/dxmt-shader-headers.sh
           bash build/dxmt-ios/build.sh
           xcrun -sdk iphoneos libtool -static -o app/Madeira/libdxmt_combined.a \
               build/dxmt-ios/obj/*.o toolchains/llvm-ios-build/lib/*.a
@@ -116,7 +117,14 @@ jobs:
       - name: Wine headers (build-macos)
         run: bash ci/wine-headers.sh
       - name: FEX core
-        run: bash build/fex-ios/build.sh
+        run: |
+          python3 ci/fex-native-fixes.py
+          if ! bash build/fex-ios/build.sh; then
+            # Keep going past the first failing file, so one run lists every error.
+            cmake --build FEX/build-ios --target FEXCore FEXCore_Base -- -k -j3 2>&1 \
+              | sed 's/\x1b\[[0-9;]*m//g' | grep -E ' error: ' | sort -u | head -80
+            exit 1
+          fi
       - name: ntdll unix
         run: bash build/ntdll-unix/build.sh
       - name: wineserver
