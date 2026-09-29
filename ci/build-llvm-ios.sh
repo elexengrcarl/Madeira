@@ -52,8 +52,13 @@ cmake -S "$T/llvm-project/llvm" -B "$T/llvm-ios-build" "${COMMON[@]}" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
     -DLLVM_HOST_TRIPLE=arm64-apple-ios17.0 -DLLVM_DEFAULT_TARGET_TRIPLE=arm64-apple-ios17.0 \
     -DLLVM_TARGET_ARCH=host -DLLVM_BUILD_TOOLS=OFF -DLLVM_BUILD_UTILS=OFF \
+    -DLLVM_INCLUDE_TOOLS=OFF -DLLVM_INCLUDE_UTILS=OFF -DLLVM_ENABLE_PLUGINS=OFF \
     -DLLVM_TABLEGEN="$T/llvm-host-build/bin/llvm-tblgen"
-ninja -C "$T/llvm-ios-build" -j"$JOBS"
+# Static libraries only: the default target also links example plugins (LLVMHello.dylib, a
+# -bundle with a .def export list, which ld64 for iOS rejects) that nothing here uses.
+LIBS=$(ninja -C "$T/llvm-ios-build" -t targets all | grep -oE '^lib/libLLVM[A-Za-z0-9]+\.a' | sort -u)
+echo "$LIBS" | wc -l | xargs echo "static libraries to build:"
+ninja -C "$T/llvm-ios-build" -j"$JOBS" $LIBS
 
 ls "$T/llvm-ios-build/lib/"*.a | wc -l | xargs echo "iOS LLVM archives:"
 lipo -info "$T/llvm-ios-build/lib/libLLVMCore.a"
