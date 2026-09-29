@@ -25,7 +25,7 @@ python3 - "$T/llvm-project/llvm/cmake/modules/AddLLVM.cmake" <<'PY'
 import re, sys
 p = sys.argv[1]
 s = open(p).read()
-pat = re.compile(r'(if\(\$\{CMAKE_SYSTEM_NAME\} MATCHES ")Darwin("\)\s*\n\s*set_property\(TARGET \$\{target_name\} APPEND_STRING PROPERTY\s*\n\s*LINK_FLAGS " -Wl,-dead_strip"\))')
+pat = re.compile(r'(if\(\$\{CMAKE_SYSTEM_NAME\} MATCHES ")Darwin("\)\s*\n(?:\s*#[^\n]*\n)*\s*set_property\(TARGET \$\{target_name\} APPEND_STRING PROPERTY\s*\n\s*LINK_FLAGS " -Wl,-dead_strip"\))')
 s2, n = pat.subn(r'\1Darwin|iOS\2', s)
 if n == 0 and 'MATCHES "Darwin|iOS")' in s:
     print("AddLLVM.cmake: already patched")
