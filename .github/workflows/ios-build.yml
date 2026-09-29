@@ -13,7 +13,11 @@ on:
   workflow_dispatch:
     inputs:
       jobs:
-        description: "Jobs to run (llvm, unixlibs, i386; blank = all). The app job needs all of them."
+        description: "Jobs to run (llvm, unixlibs, i386, app; blank = all)."
+        required: false
+        default: ""
+      artifacts_from:
+        description: "Run id whose dxmt/unixlibs/i386-windows artifacts the app job uses (with jobs=app)."
         required: false
         default: ""
   push:
@@ -21,6 +25,7 @@ on:
 
 permissions:
   contents: read
+  actions: read   # download-artifact from another run (artifacts_from)
 
 concurrency:
   group: ios-build-${{ github.ref }}
@@ -202,6 +207,10 @@ jobs:
 
   app:
     needs: [dxmt, unixlibs, i386]
+    if: >-
+      always() && (inputs.jobs == '' || inputs.jobs == null || contains(inputs.jobs, 'app')) &&
+      (inputs.artifacts_from != '' && inputs.artifacts_from != null ||
+       needs.dxmt.result == 'success' && needs.unixlibs.result == 'success' && needs.i386.result == 'success')
     runs-on: macos-26
     timeout-minutes: 90
     steps:
@@ -209,11 +218,23 @@ jobs:
       - name: Submodules (FEX headers for FEXBridge.mm)
         run: git submodule update --init --recursive --depth 1 FEX
       - uses: actions/download-artifact@v4
-        with: { name: dxmt, path: app/Madeira }
+        with:
+          name: dxmt
+          path: app/Madeira
+          run-id: ${{ inputs.artifacts_from || github.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
-        with: { name: unixlibs, path: . }
+        with:
+          name: unixlibs
+          path: .
+          run-id: ${{ inputs.artifacts_from || github.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
-        with: { name: i386-windows, path: app/Madeira/i386-windows }
+        with:
+          name: i386-windows
+          path: app/Madeira/i386-windows
+          run-id: ${{ inputs.artifacts_from || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Inputs the project expects
         run: |
           bash build/stage-licenses.sh
@@ -243,7 +264,18 @@ jobs:
           ls -l Madeira-gw.ipa
       - name: xcodebuild log
         if: failure()
-        run: grep -nE 'error|Undefined|duplicate symbol' -A3 /tmp/xcodebuild.log | head -150 || true
+        run: |
+          # The linker's own lines ("Undefined symbols", "duplicate symbol", ld: ...), which the
+          # summary filter above does not show.
+          grep -nE 'Undefined symbols|duplicate symbol|^ld: |symbol\(s\) not found|referenced from|^ +"_' \
+            -A2 /tmp/xcodebuild.log | grep -v 'ignoring duplicate libraries' | head -200 || true
+          tail -40 /tmp/xcodebuild.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: xcodebuild-log
+          path: /tmp/xcodebuild.log
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: Madeira-ipa
