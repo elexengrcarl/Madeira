@@ -753,6 +753,12 @@ static void *wine_process_thread(void *arg) {
         // Skip check_command_line / reexec_loader
         setenv("WINELOADERNOEXEC", "1", 1);
 
+        /* GW fork: a d3d9.dll beside the game is loaded ahead of the system one. GodsWar ships its
+         * own (gwfx, a proxy that chains to the system d3d9 and carries the client's network
+         * lock); Wine's default order prefers the builtin and would skip it. Not overwritten, and
+         * an env.WINEDLLOVERRIDES line in madeira.cfg (exported below) replaces it. */
+        setenv("WINEDLLOVERRIDES", "d3d9=n,b", 0);
+
         // Set DLL search path to app bundle (contains aarch64-windows/ with PE DLLs)
         {
             NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
