@@ -507,7 +507,7 @@ enum StikJITHelper {
         // derives WriteOffset from the real distance), so send it high, where it
         // lived in every run before ml977, and keep the scarce low gap for RX.
         rwAddr = 0x7000000000
-        let kr1 = vm_remap(
+        var kr1 = vm_remap(
             mach_task_self_,
             &rwAddr,
             vm_size_t(poolSize),
@@ -520,6 +520,30 @@ enum StikJITHelper {
             &maxProt,
             VM_INHERIT_NONE
         )
+
+        // GW fork: a small address map (about 64GB, e.g. an M2 iPad whose profile lacks
+        // extended-virtual-addressing) ends below 0x7000000000, so the search above finds no
+        // space (KERN_NO_SPACE) and the whole launch was abandoned. Retry just above the RX
+        // pool: the alias has no placement requirement of its own (see ml1037), and starting
+        // above RX keeps it clear of the x64 executable window at 0x140000000.
+        if kr1 != KERN_SUCCESS {
+            LogStore.shared.log("[small-map] RW alias found no space above 0x7000000000 (\(kr1)); "
+                + "retrying above the RX pool", level: .info)
+            rwAddr = rxAddrV + vm_address_t(poolSize)
+            kr1 = vm_remap(
+                mach_task_self_,
+                &rwAddr,
+                vm_size_t(poolSize),
+                0,
+                VM_FLAGS_ANYWHERE,
+                mach_task_self_,
+                vm_address_t(bitPattern: rxPtr),
+                0, // copy = false
+                &curProt,
+                &maxProt,
+                VM_INHERIT_NONE
+            )
+        }
 
         guard kr1 == KERN_SUCCESS else {
             LogStore.shared.log("vm_remap failed: \(kr1)", level: .error)
